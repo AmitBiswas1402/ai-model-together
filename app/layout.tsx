@@ -2,6 +2,9 @@ import type { Metadata } from "next";
 import { Outfit } from "next/font/google";
 import "./globals.css";
 import { ThemeProvider } from "@/components/ThemeProvider";
+import { ClerkProvider } from "@clerk/nextjs";
+import { dark } from '@clerk/themes'
+
 
 const outfit = Outfit({ subsets: ["latin"] });
 
@@ -16,11 +19,17 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" suppressHydrationWarning>
-      <body
-        className={`${outfit.className} antialiased`}
-      suppressHydrationWarning >
-        <ThemeProvider
+    <ClerkProvider
+      appearance={{
+        theme: dark,
+      }}
+    >
+      <html lang="en" suppressHydrationWarning>
+        <body
+          className={`${outfit.className} antialiased`}
+          suppressHydrationWarning
+        >
+          <ThemeProvider
             attribute="class"
             defaultTheme="system"
             enableSystem
@@ -28,7 +37,8 @@ export default function RootLayout({
           >
             {children}
           </ThemeProvider>
-      </body>
-    </html>
+        </body>
+      </html>
+    </ClerkProvider>
   );
 }
