@@ -24,15 +24,19 @@ const Hero = () => {
     };
   }, [imagePreview]);
 
-  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file && file.type.startsWith("image/")) {
+  const handleImageFile = (file: File) => {
+    if (file.type.startsWith("image/")) {
       if (imagePreview) URL.revokeObjectURL(imagePreview);
       setImageFile(file);
       setImagePreview(URL.createObjectURL(file));
     } else {
       toast.error("Please upload a valid image file");
     }
+  };
+
+  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) handleImageFile(file);
     e.target.value = "";
   };
 
@@ -136,6 +140,27 @@ const Hero = () => {
               placeholder="Describe your page design..."
               value={userInput}
               onChange={(e) => setUserInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  if (userInput.trim() && !loading) {
+                    CreateNewProject();
+                  }
+                }
+              }}
+              onPaste={(e) => {
+                const items = e.clipboardData?.items;
+                if (items) {
+                  for (let i = 0; i < items.length; i++) {
+                    if (items[i].type.startsWith("image/")) {
+                      e.preventDefault();
+                      const file = items[i].getAsFile();
+                      if (file) handleImageFile(file);
+                      break;
+                    }
+                  }
+                }
+              }}
               className="h-24 w-full resize-none bg-transparent text-sm leading-relaxed text-foreground outline-none placeholder:text-muted-foreground/40 md:text-[15px]"
             />
             {userInput && (
@@ -151,23 +176,29 @@ const Hero = () => {
           </div>
 
           <div className="mt-3 flex items-center justify-between border-t border-border/30 pt-3">
-            <input
-              type="file"
-              accept="image/*"
-              id="image-upload"
-              onChange={handleImageUpload}
-              className="hidden"
-            />
+            <div className="flex items-center">
+              <input
+                type="file"
+                accept="image/*"
+                id="image-upload"
+                onChange={handleImageUpload}
+                className="hidden"
+              />
 
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              onClick={() => document.getElementById("image-upload")?.click()}
-              className="h-9 w-9 rounded-xl text-muted-foreground transition-all hover:bg-primary/10 hover:text-primary"
-            >
-              <ImagePlus className="h-5 w-5" />
-            </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                onClick={() => document.getElementById("image-upload")?.click()}
+                className="h-9 w-9 rounded-xl text-muted-foreground transition-all hover:bg-primary/10 hover:text-primary"
+              >
+                <ImagePlus className="h-5 w-5" />
+              </Button>
+            </div>
+
+            <p className="text-xs text-muted-foreground">
+              Press Enter. Press Shift + Enter for next line.
+            </p>
 
             <Button
               size="icon-lg"
