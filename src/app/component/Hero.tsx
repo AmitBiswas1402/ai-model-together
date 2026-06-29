@@ -10,6 +10,31 @@ import { v4 as uuidv4 } from "uuid";
 
 const genRandom = () => String(Math.floor(Math.random() * 10000));
 
+const isUrl = (input: string) =>
+  /^https?:\/\/[^\s/$.?#].[^\s]*$/i.test(input.trim());
+
+const buildScrapedPrompt = (data: any) => {
+  let prompt = `Build a website similar to ${data.url}.`;
+  if (data.title) prompt += `\n\nTitle: ${data.title}`;
+  if (data.metaDescription) prompt += `\nDescription: ${data.metaDescription}`;
+  if (data.sections?.length)
+    prompt += `\nSections/Layout: ${data.sections.join(", ")}`;
+  if (data.headings?.length)
+    prompt += `\nHeadings: ${data.headings.join(" | ")}`;
+  if (data.navLinks?.length)
+    prompt += `\nNavigation: ${data.navLinks.join(" | ")}`;
+  if (data.buttons?.length)
+    prompt += `\nButtons/CTAs: ${data.buttons.join(" | ")}`;
+  if (data.paragraphs?.length)
+    prompt += `\nContent:\n${data.paragraphs.map((p: string) => `- ${p}`).join("\n")}`;
+  if (data.images?.length)
+    prompt += `\nImage subjects: ${data.images.join(", ")}`;
+  if (data.keywords) prompt += `\nKeywords: ${data.keywords}`;
+  prompt +=
+    "\n\nMatch the visual design, layout, and features as closely as possible. Use Tailwind CSS with a similar color palette and style.";
+  return prompt;
+};
+
 const Hero = () => {
   const [userInput, setUserInput] = useState("");
   const [loading, setLoading] = useState(false);
@@ -62,6 +87,14 @@ const Hero = () => {
 
     try {
       let imageUrl: string | null = null;
+      let prompt = userInput;
+
+      if (isUrl(userInput)) {
+        const scrapeRes = await axios.post("/api/scrape-url", {
+          url: userInput.trim(),
+        });
+        prompt = buildScrapedPrompt(scrapeRes.data);
+      }
 
       if (imageFile) {
         const formData = new FormData();
@@ -73,7 +106,7 @@ const Hero = () => {
       const messages = [
         {
           role: "user",
-          content: userInput,
+          content: prompt,
           ...(imageUrl ? { image: imageUrl } : {}),
         },
       ];
@@ -137,7 +170,7 @@ const Hero = () => {
 
           <div className="relative">
             <textarea
-              placeholder="Describe your page design..."
+              placeholder="Describe your page design or paste a URL to clone..."
               value={userInput}
               onChange={(e) => setUserInput(e.target.value)}
               onKeyDown={(e) => {

@@ -33,10 +33,13 @@ const Provider = ({
     }
 
     const createUser = async () => {
-      const res = await axios.post("/api/users", {});
-
-      console.log(res.data.user);
-      setUserDetails(res.data.user);
+      try {
+        const res = await axios.post("/api/users", {});
+        console.log(res.data.user);
+        setUserDetails(res.data.user);
+      } catch (error) {
+        console.error("Failed to create/fetch user", error);
+      }
     };
 
     void createUser();
