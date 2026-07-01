@@ -141,16 +141,26 @@ export async function POST(req: NextRequest) {
     const geminiBody = await buildGeminiRequest({ messages, imageUrl });
     const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:streamGenerateContent?alt=sse&key=${apiKey}`;
 
-    const response = await fetch(geminiUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(geminiBody),
-    });
+    const MAX_RETRIES = 3;
+    let response: Response | null = null;
+    let lastError = "";
 
-    if (!response.ok) {
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+      if (attempt > 0) {
+        const delay = Math.min(1000 * Math.pow(2, attempt - 1), 8000);
+        await new Promise((r) => setTimeout(r, delay));
+      }
+
+      response = await fetch(geminiUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(geminiBody),
+      });
+
+      if (response.ok) break;
+
       const errorBody = await response.text();
       let message = "Gemini API error";
-
       try {
         const parsed = JSON.parse(errorBody) as {
           error?: { message?: string };
@@ -160,7 +170,22 @@ export async function POST(req: NextRequest) {
         if (errorBody) message = errorBody;
       }
 
-      return NextResponse.json({ error: message }, { status: response.status });
+      const isRetryable = response.status === 429 || response.status === 503;
+      lastError = message;
+
+      if (!isRetryable || attempt === MAX_RETRIES) {
+        return NextResponse.json(
+          { error: message },
+          { status: response.status },
+        );
+      }
+    }
+
+    if (!response || !response.ok) {
+      return NextResponse.json(
+        { error: lastError || "Gemini API error" },
+        { status: response?.status ?? 502 },
+      );
     }
 
     if (!response.body) {

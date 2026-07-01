@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import * as cheerio from "cheerio";
 
 export async function POST(req: NextRequest) {
   try {
@@ -11,7 +12,6 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Validate URL format
     let parsedUrl: URL;
     try {
       parsedUrl = new URL(url);
@@ -22,7 +22,13 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Fetch the webpage HTML server-side (avoids CORS)
+    if (!["http:", "https:"].includes(parsedUrl.protocol)) {
+      return NextResponse.json(
+        { error: "Only HTTP and HTTPS URLs are supported" },
+        { status: 400 }
+      );
+    }
+
     const response = await fetch(parsedUrl.toString(), {
       headers: {
         "User-Agent":
@@ -30,7 +36,7 @@ export async function POST(req: NextRequest) {
         Accept:
           "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
       },
-      signal: AbortSignal.timeout(10000), // 10s timeout
+      signal: AbortSignal.timeout(15000),
     });
 
     if (!response.ok) {
@@ -40,9 +46,15 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const html = await response.text();
+    const contentType = response.headers.get("content-type") || "";
+    if (!contentType.includes("text/html") && !contentType.includes("xhtml")) {
+      return NextResponse.json(
+        { error: "URL does not return HTML content" },
+        { status: 422 }
+      );
+    }
 
-    // Extract useful content from the HTML
+    const html = await response.text();
     const scraped = extractPageContent(html, parsedUrl.toString());
 
     return NextResponse.json(scraped);
@@ -55,114 +67,108 @@ export async function POST(req: NextRequest) {
   }
 }
 
-/**
- * Extracts meaningful content from raw HTML for AI prompt building.
- */
 function extractPageContent(html: string, url: string) {
-  // Extract <title>
-  const titleMatch = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
-  const title = titleMatch ? titleMatch[1].trim() : "";
+  const $ = cheerio.load(html);
 
-  // Extract meta description
-  const metaDescMatch = html.match(
-    /<meta[^>]*name=["']description["'][^>]*content=["']([\s\S]*?)["']/i
-  );
-  const metaDescription = metaDescMatch ? metaDescMatch[1].trim() : "";
+  // Remove script, style, noscript, and hidden elements
+  $("script, style, noscript, iframe, svg").remove();
+  $('[style*="display: none"], [style*="display:none"], [hidden]').remove();
 
-  // Extract meta keywords
-  const metaKeywordsMatch = html.match(
-    /<meta[^>]*name=["']keywords["'][^>]*content=["']([\s\S]*?)["']/i
-  );
-  const keywords = metaKeywordsMatch ? metaKeywordsMatch[1].trim() : "";
+  const title = $("title").first().text().trim();
 
-  // Extract all headings (h1-h6)
+  // Try multiple attribute orderings for meta description
+  let metaDescription = "";
+  $("meta[name='description'], meta[name='Description']").each((_, el) => {
+    const content = $(el).attr("content");
+    if (content && !metaDescription) metaDescription = content.trim();
+  });
+  // Fallback: property="og:description"
+  if (!metaDescription) {
+    $("meta[property='og:description']").each((_, el) => {
+      const content = $(el).attr("content");
+      if (content && !metaDescription) metaDescription = content.trim();
+    });
+  }
+
+  let keywords = "";
+  $("meta[name='keywords'], meta[name='Keywords']").each((_, el) => {
+    const content = $(el).attr("content");
+    if (content && !keywords) keywords = content.trim();
+  });
+
+  // Extract headings
   const headings: string[] = [];
-  const headingRegex = /<h[1-6][^>]*>([\s\S]*?)<\/h[1-6]>/gi;
-  let match;
-  while ((match = headingRegex.exec(html)) !== null) {
-    const text = stripTags(match[1]).trim();
-    if (text && text.length < 200) {
+  $("h1, h2, h3, h4, h5, h6").each((_, el) => {
+    const text = $(el).text().trim().replace(/\s+/g, " ");
+    if (text && text.length < 200 && headings.length < 15) {
       headings.push(text);
     }
-  }
+  });
 
   // Extract navigation links
-  const navLinks: string[] = [];
-  const navMatch = html.match(/<nav[^>]*>([\s\S]*?)<\/nav>/gi);
-  if (navMatch) {
-    for (const nav of navMatch) {
-      const linkRegex = /<a[^>]*>([\s\S]*?)<\/a>/gi;
-      let linkMatch;
-      while ((linkMatch = linkRegex.exec(nav)) !== null) {
-        const text = stripTags(linkMatch[1]).trim();
-        if (text && text.length < 50) {
-          navLinks.push(text);
-        }
-      }
+  const navLinksSet = new Set<string>();
+  $("nav a, [role='navigation'] a, header a").each((_, el) => {
+    const text = $(el).text().trim().replace(/\s+/g, " ");
+    if (text && text.length < 50 && navLinksSet.size < 15) {
+      navLinksSet.add(text);
     }
-  }
+  });
+  const navLinks = [...navLinksSet];
 
   // Extract button texts
-  const buttons: string[] = [];
-  const buttonRegex = /<button[^>]*>([\s\S]*?)<\/button>/gi;
-  while ((match = buttonRegex.exec(html)) !== null) {
-    const text = stripTags(match[1]).trim();
-    if (text && text.length < 80) {
-      buttons.push(text);
+  const buttonsSet = new Set<string>();
+  $("button, [role='button'], a.btn, a.button, .cta").each((_, el) => {
+    const text = $(el).text().trim().replace(/\s+/g, " ");
+    if (text && text.length < 80 && text.length > 1 && buttonsSet.size < 10) {
+      buttonsSet.add(text);
     }
-  }
+  });
+  const buttons = [...buttonsSet];
 
-  // Extract paragraph content (first ~10 meaningful paragraphs)
+  // Extract paragraphs
   const paragraphs: string[] = [];
-  const pRegex = /<p[^>]*>([\s\S]*?)<\/p>/gi;
-  while ((match = pRegex.exec(html)) !== null && paragraphs.length < 10) {
-    const text = stripTags(match[1]).trim();
-    if (text && text.length > 20 && text.length < 500) {
+  $("p").each((_, el) => {
+    if (paragraphs.length >= 10) return false;
+    const text = $(el).text().trim().replace(/\s+/g, " ");
+    if (text.length > 20 && text.length < 500) {
       paragraphs.push(text);
     }
-  }
+  });
 
-  // Extract image alt texts
-  const images: string[] = [];
-  const imgRegex = /<img[^>]*alt=["']([\s\S]*?)["'][^>]*>/gi;
-  while ((match = imgRegex.exec(html)) !== null && images.length < 10) {
-    const alt = match[1].trim();
-    if (alt && alt.length > 2) {
-      images.push(alt);
+  // Extract image alt texts (deduplicated)
+  const imagesSet = new Set<string>();
+  $("img").each((_, el) => {
+    const alt = $(el).attr("alt")?.trim();
+    if (alt && alt.length > 2 && imagesSet.size < 10) {
+      imagesSet.add(alt);
     }
-  }
+  });
+  const images = [...imagesSet];
 
   // Detect sections/landmarks
-  const sections: string[] = [];
-  const sectionRegex =
-    /<(?:section|footer|header|main|aside)[^>]*(?:id|class|aria-label)=["']([^"']+)["'][^>]*>/gi;
-  while ((match = sectionRegex.exec(html)) !== null && sections.length < 15) {
-    sections.push(match[1].trim());
-  }
+  const sectionsSet = new Set<string>();
+  $("section, footer, header, main, aside, [role='main'], [role='contentinfo'], [role='banner'], [role='complementary']").each(
+    (_, el) => {
+      if (sectionsSet.size >= 15) return false;
+      const id = $(el).attr("id");
+      const ariaLabel = $(el).attr("aria-label");
+      const className = $(el).attr("class");
+      const label = id || ariaLabel || className?.split(/\s+/).filter(Boolean)[0];
+      if (label) sectionsSet.add(label);
+    }
+  );
+  const sections = [...sectionsSet];
 
   return {
     url,
     title,
     metaDescription,
     keywords,
-    headings: headings.slice(0, 15),
-    navLinks: [...new Set(navLinks)].slice(0, 15),
-    buttons: [...new Set(buttons)].slice(0, 10),
+    headings,
+    navLinks,
+    buttons,
     paragraphs,
     images,
     sections,
   };
-}
-
-/** Strip HTML tags from a string */
-function stripTags(str: string): string {
-  return str
-    .replace(/<[^>]*>/g, "")
-    .replace(/&nbsp;/g, " ")
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/\s+/g, " ");
 }

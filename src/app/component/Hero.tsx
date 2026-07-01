@@ -10,31 +10,6 @@ import { v4 as uuidv4 } from "uuid";
 
 const genRandom = () => String(Math.floor(Math.random() * 10000));
 
-const isUrl = (input: string) =>
-  /^https?:\/\/[^\s/$.?#].[^\s]*$/i.test(input.trim());
-
-const buildScrapedPrompt = (data: any) => {
-  let prompt = `Build a website similar to ${data.url}.`;
-  if (data.title) prompt += `\n\nTitle: ${data.title}`;
-  if (data.metaDescription) prompt += `\nDescription: ${data.metaDescription}`;
-  if (data.sections?.length)
-    prompt += `\nSections/Layout: ${data.sections.join(", ")}`;
-  if (data.headings?.length)
-    prompt += `\nHeadings: ${data.headings.join(" | ")}`;
-  if (data.navLinks?.length)
-    prompt += `\nNavigation: ${data.navLinks.join(" | ")}`;
-  if (data.buttons?.length)
-    prompt += `\nButtons/CTAs: ${data.buttons.join(" | ")}`;
-  if (data.paragraphs?.length)
-    prompt += `\nContent:\n${data.paragraphs.map((p: string) => `- ${p}`).join("\n")}`;
-  if (data.images?.length)
-    prompt += `\nImage subjects: ${data.images.join(", ")}`;
-  if (data.keywords) prompt += `\nKeywords: ${data.keywords}`;
-  prompt +=
-    "\n\nMatch the visual design, layout, and features as closely as possible. Use Tailwind CSS with a similar color palette and style.";
-  return prompt;
-};
-
 const Hero = () => {
   const [userInput, setUserInput] = useState("");
   const [loading, setLoading] = useState(false);
@@ -42,6 +17,24 @@ const Hero = () => {
   const [imageFile, setImageFile] = useState<File | null>(null);
 
   const router = useRouter();
+
+  const inputIsUrl = (() => {
+    try {
+      const trimmed = userInput.trim();
+      if (/^https?:\/\//i.test(trimmed)) {
+        new URL(trimmed);
+        return true;
+      }
+      if (/^[\w-]+(\.[\w-]+)+/.test(trimmed) && !trimmed.includes(" ")) {
+        const withProto = `https://${trimmed}`;
+        new URL(withProto);
+        return true;
+      }
+      return false;
+    } catch {
+      return false;
+    }
+  })();
 
   useEffect(() => {
     return () => {
@@ -89,11 +82,42 @@ const Hero = () => {
       let imageUrl: string | null = null;
       let prompt = userInput;
 
-      if (isUrl(userInput)) {
-        const scrapeRes = await axios.post("/api/scrape-url", {
-          url: userInput.trim(),
-        });
-        prompt = buildScrapedPrompt(scrapeRes.data);
+      if (inputIsUrl) {
+        try {
+          toast.info("Analyzing website...");
+          const scrapeUrl = /^https?:\/\//i.test(userInput.trim())
+            ? userInput.trim()
+            : `https://${userInput.trim()}`;
+          const scrapeResult = await axios.post("/api/scrape-url", {
+            url: scrapeUrl,
+          });
+          const data = scrapeResult.data;
+          let scrapedPrompt = `Recreate a website inspired by ${userInput.trim()}.\n\n`;
+          scrapedPrompt += `Here is the extracted content from that website:\n`;
+          if (data.title) scrapedPrompt += `- Page Title: ${data.title}\n`;
+          if (data.metaDescription)
+            scrapedPrompt += `- Description: ${data.metaDescription}\n`;
+          if (data.navLinks?.length)
+            scrapedPrompt += `- Navigation Items: ${data.navLinks.join(", ")}\n`;
+          if (data.headings?.length)
+            scrapedPrompt += `- Headings: ${data.headings.join(" | ")}\n`;
+          if (data.paragraphs?.length)
+            scrapedPrompt += `- Content Sections:\n${data.paragraphs.map((p: string) => `  • ${p}`).join("\n")}\n`;
+          if (data.buttons?.length)
+            scrapedPrompt += `- Buttons/CTAs: ${data.buttons.join(", ")}\n`;
+          if (data.images?.length)
+            scrapedPrompt += `- Image Descriptions: ${data.images.join(", ")}\n`;
+          if (data.sections?.length)
+            scrapedPrompt += `- Page Sections/Landmarks: ${data.sections.join(", ")}\n`;
+          scrapedPrompt += `\nGenerate a complete, modern, responsive HTML website (body content only) that recreates this design using Tailwind CSS and Flowbite components. Match the layout, sections, and content structure as closely as possible while making it visually stunning.`;
+          prompt = scrapedPrompt;
+        } catch (error) {
+          console.error("Failed to scrape URL:", error);
+          toast.error(
+            "Could not analyze the website, generating from URL text...",
+          );
+          prompt = `Recreate a website similar to ${userInput}. Generate a complete, modern, responsive HTML website (body content only) using Tailwind CSS and Flowbite components.`;
+        }
       }
 
       if (imageFile) {
@@ -239,11 +263,7 @@ const Hero = () => {
               className="rounded-full bg-primary text-primary-foreground shadow-lg shadow-primary/25 transition-all hover:scale-[1.04] hover:opacity-90 active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-50"
               onClick={CreateNewProject}
             >
-              {loading ? (
-                <Loader2Icon className="animate-spin" />
-              ) : (
-                <ArrowUp />
-              )}
+              {loading ? <Loader2Icon className="animate-spin" /> : <ArrowUp />}
             </Button>
           </div>
         </div>

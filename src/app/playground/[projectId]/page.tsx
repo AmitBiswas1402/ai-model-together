@@ -35,6 +35,8 @@ You CANNOT use React, Vue, Svelte, TypeScript, CSS modules, npm installs, or bui
 - Lottie — vector animations via lottie.loadAnimation()
 - Tippy.js — tooltips via data-tippy-content
 
+When scraped website data is provided in the user message (e.g. page title, headings, navigation items, paragraphs, sections), you MUST recreate that website's design, layout, and content as closely as possible. Use the scraped data as your source of truth — match the structure, sections, navigation, headings, text content, and overall layout. Do NOT refuse or generate something generic.
+
 When existing website code is provided in a prior system message, treat it as the current state to modify — preserve sections unless the user asks to remove or replace them.
 
 WORKFLOW:
@@ -251,7 +253,64 @@ const Playground = () => {
   }, [frameId, messages, generatedCode, projectId, saveContext]);
 
   const SendMessage = async (userInput: string) => {
-    const userMessage: Messages = { role: "user", content: userInput };
+    let finalPrompt = userInput;
+
+    const trimmed = userInput.trim();
+    const isUrl = (() => {
+      try {
+        if (/^https?:\/\//i.test(trimmed)) {
+          new URL(trimmed);
+          return true;
+        }
+        if (/^[\w-]+(\.[\w-]+)+/.test(trimmed) && !trimmed.includes(" ")) {
+          new URL(`https://${trimmed}`);
+          return true;
+        }
+        return false;
+      } catch {
+        return false;
+      }
+    })();
+
+    if (isUrl) {
+      try {
+        toast.info("Analyzing website...");
+        const scrapeUrl = /^https?:\/\//i.test(trimmed)
+          ? trimmed
+          : `https://${trimmed}`;
+        const scrapeResult = await axios.post("/api/scrape-url", {
+          url: scrapeUrl,
+        });
+        const data = scrapeResult.data;
+        let scrapedPrompt = `Recreate a website inspired by ${trimmed}.\n\n`;
+        scrapedPrompt += `Here is the extracted content from that website:\n`;
+        if (data.title) scrapedPrompt += `- Page Title: ${data.title}\n`;
+        if (data.metaDescription)
+          scrapedPrompt += `- Description: ${data.metaDescription}\n`;
+        if (data.navLinks?.length)
+          scrapedPrompt += `- Navigation Items: ${data.navLinks.join(", ")}\n`;
+        if (data.headings?.length)
+          scrapedPrompt += `- Headings: ${data.headings.join(" | ")}\n`;
+        if (data.paragraphs?.length)
+          scrapedPrompt += `- Content Sections:\n${data.paragraphs.map((p: string) => `  • ${p}`).join("\n")}\n`;
+        if (data.buttons?.length)
+          scrapedPrompt += `- Buttons/CTAs: ${data.buttons.join(", ")}\n`;
+        if (data.images?.length)
+          scrapedPrompt += `- Image Descriptions: ${data.images.join(", ")}\n`;
+        if (data.sections?.length)
+          scrapedPrompt += `- Page Sections/Landmarks: ${data.sections.join(", ")}\n`;
+        scrapedPrompt += `\nGenerate a complete, modern, responsive HTML website (body content only) that recreates this design using Tailwind CSS and Flowbite components. Match the layout, sections, and content structure as closely as possible while making it visually stunning.`;
+        finalPrompt = scrapedPrompt;
+      } catch (error) {
+        console.error("Failed to scrape URL:", error);
+        toast.error(
+          "Could not analyze the website, generating from URL text...",
+        );
+        finalPrompt = `Recreate a website similar to ${trimmed}. Generate a complete, modern, responsive HTML website (body content only) using Tailwind CSS and Flowbite components.`;
+      }
+    }
+
+    const userMessage: Messages = { role: "user", content: finalPrompt };
     const messagesWithUser = [...messages, userMessage];
 
     setMessages(messagesWithUser);
